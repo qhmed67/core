@@ -1,0 +1,5 @@
+# Canonical git identity for this repository and its hooks.
+# Change it here once; the hooks read it from this file (the installer copies
+# it next to the installed hooks as core-identity).
+CORE_GIT_NAME="qhmed67"
+CORE_GIT_EMAIL="ahmedalmslm74@gmail.com"

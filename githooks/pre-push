@@ -1,0 +1,78 @@
+#!/bin/sh
+# core-managed-hook
+# Check every outgoing commit for the canonical identity and scan outgoing
+# diffs for secret-looking strings. POSIX sh so it runs under Git for Windows.
+# There is no bypass flag.
+set -u
+
+hook_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+if [ -f "$hook_dir/core-identity" ]; then
+  . "$hook_dir/core-identity"
+elif root=$(git rev-parse --show-toplevel 2>/dev/null) && [ -f "$root/githooks/identity" ]; then
+  . "$root/githooks/identity"
+else
+  printf '%s\n' "pre-push: identity file not found (expected core-identity beside this hook)" >&2
+  exit 1
+fi
+
+if [ -z "${CORE_GIT_NAME:-}" ] || [ -z "${CORE_GIT_EMAIL:-}" ]; then
+  printf '%s\n' "pre-push: identity file is incomplete" >&2
+  exit 1
+fi
+
+remote=${1:-}
+status=0
+
+check_commit() {
+  commit=$1
+
+  author_name=$(git show -s --format=%an "$commit" 2>/dev/null) || return 1
+  author_email=$(git show -s --format=%ae "$commit" 2>/dev/null) || return 1
+  committer_name=$(git show -s --format=%cn "$commit" 2>/dev/null) || return 1
+  committer_email=$(git show -s --format=%ce "$commit" 2>/dev/null) || return 1
+
+  if [ "$author_name" != "$CORE_GIT_NAME" ] || [ "$author_email" != "$CORE_GIT_EMAIL" ]; then
+    printf 'pre-push: wrong author on %s: %s <%s>\n' "$commit" "$author_name" "$author_email" >&2
+    status=1
+  fi
+
+  if [ "$committer_name" != "$CORE_GIT_NAME" ] || [ "$committer_email" != "$CORE_GIT_EMAIL" ]; then
+    printf 'pre-push: wrong committer on %s: %s <%s>\n' "$commit" "$committer_name" "$committer_email" >&2
+    status=1
+  fi
+
+  # Scan added lines only. Do not print the matching line: it contains a secret.
+  if git show --format= --patch "$commit" 2>/dev/null \
+    | grep -E '^\+[^+]' \
+    | grep -Eq 'github_pat_[A-Za-z0-9_]{20,}|ghp_[A-Za-z0-9]{30,}|sk-[A-Za-z0-9_-]{20,}|fc-[A-Za-z0-9]{20,}'; then
+    printf 'pre-push: possible secret in %s; remove it and rewrite the commit before pushing\n' "$commit" >&2
+    status=1
+  fi
+}
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -n "${local_sha:-}" ] || continue
+
+  case "$local_sha" in
+    0000000000000000000000000000000000000000) continue ;;
+  esac
+
+  if [ "${remote_sha:-}" = "0000000000000000000000000000000000000000" ] || [ -z "${remote_sha:-}" ]; then
+    commits=$(git rev-list "$local_sha" --not --remotes="${remote:-origin}" 2>/dev/null) || {
+      printf '%s\n' "pre-push: cannot list outgoing commits for $local_ref" >&2
+      exit 1
+    }
+  else
+    commits=$(git rev-list "$remote_sha..$local_sha" 2>/dev/null) || {
+      printf '%s\n' "pre-push: cannot list outgoing commits for $local_ref" >&2
+      exit 1
+    }
+  fi
+
+  for commit in $commits; do
+    check_commit "$commit"
+  done
+done
+
+exit "$status"
