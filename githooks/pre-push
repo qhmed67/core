@@ -1,0 +1,122 @@
+#!/bin/sh
+# core-managed-hook
+# Check every outgoing commit for the canonical identity, scan outgoing diffs
+# for secret-looking strings, and enforce push size limits and protected
+# branches. POSIX sh so it runs under Git for Windows.
+# Only a human may set CORE_ALLOW_LARGE=1 for a deliberate large push.
+set -u
+
+hook_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+if [ -f "$hook_dir/core-identity" ]; then
+  . "$hook_dir/core-identity"
+elif root=$(git rev-parse --show-toplevel 2>/dev/null) && [ -f "$root/githooks/identity" ]; then
+  . "$root/githooks/identity"
+else
+  printf '%s\n' "pre-push: identity file not found (expected core-identity beside this hook)" >&2
+  exit 1
+fi
+
+if [ -z "${CORE_GIT_NAME:-}" ] || [ -z "${CORE_GIT_EMAIL:-}" ]; then
+  printf '%s\n' "pre-push: identity file is incomplete" >&2
+  exit 1
+fi
+
+: "${CORE_MAX_PUSH_COMMITS:=8}"
+: "${CORE_MAX_PUSH_FILES:=40}"
+: "${CORE_MAX_PUSH_LINES:=1500}"
+: "${CORE_PROTECTED_BRANCHES:=}"
+
+remote=${1:-}
+status=0
+
+check_commit() {
+  commit=$1
+
+  author_name=$(git show -s --format=%an "$commit" 2>/dev/null) || return 1
+  author_email=$(git show -s --format=%ae "$commit" 2>/dev/null) || return 1
+  committer_name=$(git show -s --format=%cn "$commit" 2>/dev/null) || return 1
+  committer_email=$(git show -s --format=%ce "$commit" 2>/dev/null) || return 1
+
+  if [ "$author_name" != "$CORE_GIT_NAME" ] || [ "$author_email" != "$CORE_GIT_EMAIL" ]; then
+    printf 'pre-push: wrong author on %s: %s <%s>\n' "$commit" "$author_name" "$author_email" >&2
+    status=1
+  fi
+
+  if [ "$committer_name" != "$CORE_GIT_NAME" ] || [ "$committer_email" != "$CORE_GIT_EMAIL" ]; then
+    printf 'pre-push: wrong committer on %s: %s <%s>\n' "$commit" "$committer_name" "$committer_email" >&2
+    status=1
+  fi
+
+  # Scan added lines only. Do not print the matching line: it contains a secret.
+  if git show --format= --patch "$commit" 2>/dev/null \
+    | grep -E '^\+[^+]' \
+    | grep -Eq 'github_pat_[A-Za-z0-9_]{20,}|ghp_[A-Za-z0-9]{30,}|sk-[A-Za-z0-9_-]{20,}|fc-[A-Za-z0-9]{20,}'; then
+    printf 'pre-push: possible secret in %s; remove it and rewrite the commit before pushing\n' "$commit" >&2
+    status=1
+  fi
+}
+
+# Refuse a push that is too large for a reviewer, or that targets a protected
+# branch. Arguments: remote ref, local sha, outgoing commit list.
+check_push_size() {
+  ref=$1
+  sha=$2
+  list=$3
+
+  branch=${ref#refs/heads/}
+  for protected in $CORE_PROTECTED_BRANCHES; do
+    if [ "$branch" = "$protected" ] && [ "${CORE_ALLOW_PROTECTED:-}" != "1" ]; then
+      printf 'pre-push: direct push to protected branch %s is not allowed; use a branch and a PR\n' "$branch" >&2
+      status=1
+    fi
+  done
+
+  [ "${CORE_ALLOW_LARGE:-}" = "1" ] && return 0
+  [ -n "$list" ] || return 0
+
+  count=$(printf '%s\n' "$list" | sed '/^$/d' | wc -l | tr -d ' ')
+  oldest=$(printf '%s\n' "$list" | sed '/^$/d' | tail -n 1)
+  if git rev-parse --verify --quiet "${oldest}^" >/dev/null 2>&1; then
+    base="${oldest}^"
+  else
+    base=$(git hash-object -t tree /dev/null)
+  fi
+  stats=$(git diff --numstat "$base" "$sha" 2>/dev/null || true)
+  files=$(printf '%s\n' "$stats" | sed '/^$/d' | wc -l | tr -d ' ')
+  lines=$(printf '%s\n' "$stats" | awk '$1 ~ /^[0-9]+$/ && $2 ~ /^[0-9]+$/ { s += $1 + $2 } END { print s + 0 }')
+
+  if [ "$count" -gt "$CORE_MAX_PUSH_COMMITS" ] || [ "$files" -gt "$CORE_MAX_PUSH_FILES" ] || [ "$lines" -gt "$CORE_MAX_PUSH_LINES" ]; then
+    printf 'pre-push: push too large (%s commits, %s files, %s changed lines; limit %s, %s, %s). Split it into reviewable batches.\n' \
+      "$count" "$files" "$lines" "$CORE_MAX_PUSH_COMMITS" "$CORE_MAX_PUSH_FILES" "$CORE_MAX_PUSH_LINES" >&2
+    status=1
+  fi
+}
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -n "${local_sha:-}" ] || continue
+
+  case "$local_sha" in
+    0000000000000000000000000000000000000000) continue ;;
+  esac
+
+  if [ "${remote_sha:-}" = "0000000000000000000000000000000000000000" ] || [ -z "${remote_sha:-}" ]; then
+    commits=$(git rev-list "$local_sha" --not --remotes="${remote:-origin}" 2>/dev/null) || {
+      printf '%s\n' "pre-push: cannot list outgoing commits for $local_ref" >&2
+      exit 1
+    }
+  else
+    commits=$(git rev-list "$remote_sha..$local_sha" 2>/dev/null) || {
+      printf '%s\n' "pre-push: cannot list outgoing commits for $local_ref" >&2
+      exit 1
+    }
+  fi
+
+  for commit in $commits; do
+    check_commit "$commit"
+  done
+
+  check_push_size "$remote_ref" "$local_sha" "$commits"
+done
+
+exit "$status"

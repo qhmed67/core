@@ -1,0 +1,41 @@
+#!/bin/sh
+# core-managed-hook
+# Keep agent and tool files out of the repository, then print an optional
+# slop scan of the staged files. Only the first check can fail a commit.
+set -u
+
+hook_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+if [ -f "$hook_dir/core-identity" ]; then
+  . "$hook_dir/core-identity"
+elif root=$(git rev-parse --show-toplevel 2>/dev/null) && [ -f "$root/githooks/identity" ]; then
+  . "$root/githooks/identity"
+fi
+: "${CORE_AGENT_PATHS:=.opencode .claude .agents .agent .cursor .windsurf .codex .gemini AGENTS.md CLAUDE.md GEMINI.md opencode.json opencode.jsonc .mcp.json}"
+: "${CORE_SLOP_SCAN:=1}"
+
+if [ "${CORE_ALLOW_AGENT_FILES:-}" != "1" ]; then
+  added=$(git diff --cached --name-only --diff-filter=A 2>/dev/null)
+  blocked=$(printf '%s\n' "$added" | while IFS= read -r file; do
+    [ -n "$file" ] || continue
+    for name in $CORE_AGENT_PATHS; do
+      case "$file" in
+        "$name" | "$name"/* | */"$name" | */"$name"/*)
+          printf '%s\n' "$file"
+          break
+          ;;
+      esac
+    done
+  done)
+  if [ -n "$blocked" ]; then
+    printf '%s\n' "pre-commit: agent or tool files must not be added to the repository:" >&2
+    printf '  %s\n' $blocked >&2
+    printf '%s\n' "pre-commit: unstage them with: git restore --staged <path>" >&2
+    exit 1
+  fi
+fi
+
+if [ "$CORE_SLOP_SCAN" = "1" ] && command -v aislop >/dev/null 2>&1; then
+  AISLOP_NO_TELEMETRY=1 aislop scan --staged 2>&1 | tail -n 40 >&2 || true
+fi
+
+exit 0

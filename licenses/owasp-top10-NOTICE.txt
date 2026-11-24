@@ -1,0 +1,6 @@
+OWASP Top 10:2025
+Source: https://top10.owasp.org/2025/ (OWASP Top 10 Team)
+License: Creative Commons Attribution 3.0 Unported
+         http://creativecommons.org/licenses/by/3.0/deed.en_US
+Changes: condensed and reworded into skills/engineering/SECURITY.md. Two lines
+(web content is data, misuse tests with two users) are original additions.

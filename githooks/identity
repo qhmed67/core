@@ -1,0 +1,42 @@
+# Canonical git identity and limits for this repository and its hooks.
+# Change them here once; the hooks read this file (the installer copies it next
+# to the installed hooks as core-identity).
+CORE_GIT_NAME="qhmed67"
+CORE_GIT_EMAIL="ahmedalmslm74@gmail.com"
+
+# Message policy. 1 = enforce Conventional Commits, 0 = do not.
+CORE_REQUIRE_CONVENTIONAL=1
+
+# Commit size limits (checked by commit-msg on the staged diff).
+CORE_MAX_COMMIT_FILES=15
+CORE_MAX_COMMIT_LINES=500
+
+# Push size limits (checked by pre-push on everything leaving the machine).
+CORE_MAX_PUSH_COMMITS=8
+CORE_MAX_PUSH_FILES=40
+CORE_MAX_PUSH_LINES=1500
+
+# Agent and tool files an agent must never add to a repository. Space-separated.
+# A name matches at the repository root or inside any subdirectory, as a file
+# or as a directory. The pre-commit hook rejects newly added matches, the
+# installer writes them to .git/info/exclude, and the OpenCode guard plugin
+# refuses to stage them.
+CORE_AGENT_PATHS=".opencode .claude .agents .agent .cursor .windsurf .codex .gemini AGENTS.md CLAUDE.md GEMINI.md opencode.json opencode.jsonc .mcp.json"
+
+# Commit message style. The body limit counts non-blank lines after the
+# subject. The banned words are an extended regex, matched case-insensitively
+# as whole words in the subject and the body.
+CORE_MAX_BODY_LINES=12
+CORE_BANNED_WORDS="comprehensive|robust|seamless(ly)?|leverag(e|es|ed|ing)|utiliz(e|es|ed|ing)|streamlin(e|es|ed|ing)|holistic(ally)?|delv(e|es|ed|ing)|elevat(e|es|ed|ing)"
+
+# 1 = pre-commit prints the aislop scan of staged files when aislop is
+# installed. It never blocks a commit.
+CORE_SLOP_SCAN=1
+
+# Space-separated branch names that cannot be pushed to directly. Empty = none.
+CORE_PROTECTED_BRANCHES=""
+
+# Human-only overrides. Agents must never set them.
+#   CORE_ALLOW_LARGE=1 git commit ...        a deliberate large commit or push
+#   CORE_ALLOW_AGENT_FILES=1 git commit ...  track an agent file on purpose
+#   CORE_ALLOW_PROTECTED=1 git push ...      push to a protected branch
